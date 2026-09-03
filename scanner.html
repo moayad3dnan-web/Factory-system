@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ماسح الخزائن</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@600&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --walnut:#3b2a20;
+    --walnut-dark:#1a120c;
+    --oak:#c79a63;
+    --oak-light:#e4cda3;
+    --safety:#d9622b;
+    --safety-dark:#b84e1f;
+    --ok:#4b7a4f;
+    --bad:#c0392b;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0;padding:0;
+    background:var(--walnut-dark);
+    color:#fff;
+    font-family:'Tajawal',sans-serif;
+    height:100%;
+    overflow:hidden;
+    overscroll-behavior:none;
+  }
+  .app{display:flex; flex-direction:column; height:100vh; height:100dvh;}
+
+  header{
+    padding:14px 16px calc(10px + env(safe-area-inset-top)) 16px;
+    background:var(--walnut);
+    text-align:center;
+    flex-shrink:0;
+  }
+  header h1{margin:0; font-size:1.15rem; font-weight:900; color:var(--oak-light);}
+  header .sub{font-size:0.72rem; color:var(--oak); margin-top:2px;}
+  header .conn{
+    display:inline-block;
+    margin-top:6px;
+    font-size:0.68rem;
+    padding:3px 10px;
+    border-radius:12px;
+    font-weight:700;
+  }
+  header .conn.on{background:rgba(75,122,79,0.35); color:#bfe3c2;}
+  header .conn.off{background:rgba(192,57,43,0.35); color:#f3c2bc;}
+
+  .cam-wrap{position:relative; flex:1; min-height:0; background:#000; overflow:hidden;}
+  video{width:100%; height:100%; object-fit:cover; display:block;}
+  canvas#scanCanvas{display:none;}
+  .scan-frame{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:78%; max-width:420px; aspect-ratio:2.2/1;
+    border:3px solid var(--safety); border-radius:12px;
+    box-shadow:0 0 0 2000px rgba(0,0,0,0.45);
+    pointer-events:none;
+  }
+  .cam-hint{
+    position:absolute; bottom:14px; left:0; right:0; text-align:center;
+    font-size:0.8rem; color:#fff; opacity:0.85; text-shadow:0 1px 3px rgba(0,0,0,0.6);
+  }
+  .cam-off{
+    display:none; position:absolute; inset:0; align-items:center; justify-content:center;
+    flex-direction:column; gap:14px; text-align:center; padding:24px; color:var(--oak-light);
+    z-index:10;
+  }
+  .cam-off.show{display:flex;}
+  .cam-off .icon{font-size:2.4rem;}
+  .cam-off p{margin:0; font-size:0.92rem; line-height:1.7;}
+  button.retry{
+    border:none; background:var(--safety); color:#fff; font-family:inherit;
+    font-weight:700; font-size:0.9rem; padding:11px 22px; border-radius:24px; cursor:pointer;
+  }
+
+  .result-panel{
+    flex-shrink:0;
+    padding:18px 16px calc(16px + env(safe-area-inset-bottom)) 16px;
+    background:var(--walnut);
+    min-height:108px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+    transition:background .2s;
+  }
+  .result-panel.ok{background:var(--ok);}
+  .result-panel.bad{background:var(--bad);}
+  .result-panel .r-label{font-size:0.78rem; font-weight:700; opacity:0.85;}
+  .result-panel .r-value{font-size:1.7rem; font-weight:900; line-height:1.3;}
+  .result-panel .r-code{font-family:'JetBrains Mono',monospace; font-size:0.72rem; opacity:0.75; margin-top:2px;}
+  .result-panel.idle .r-label{opacity:0.6;}
+
+  .manual-toggle{
+    position:absolute; top:calc(12px + env(safe-area-inset-top)); left:12px;
+    background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.3); color:#fff;
+    font-family:inherit; font-size:0.75rem; padding:7px 12px; border-radius:20px; cursor:pointer;
+    z-index:25;
+  }
+  .manual-box{
+    display:none; position:absolute; inset:0; background:rgba(20,14,10,0.96); z-index:30;
+    align-items:center; justify-content:center; padding:24px;
+  }
+  .manual-box.show{display:flex;}
+  .manual-inner{width:100%; max-width:360px; text-align:center;}
+  .manual-inner label{display:block; font-size:0.85rem; color:var(--oak-light); margin-bottom:10px;}
+  .manual-inner input{
+    width:100%; padding:14px; font-size:1.1rem; font-family:'JetBrains Mono',monospace;
+    text-align:center; border:2px solid var(--oak); border-radius:8px; background:#fff;
+    color:#241b14; outline:none; margin-bottom:14px;
+  }
+  .manual-inner .row{display:flex; gap:10px;}
+  .manual-inner button{
+    flex:1; border:none; padding:12px; border-radius:8px; font-family:inherit;
+    font-weight:700; font-size:0.9rem; cursor:pointer;
+  }
+  #quaggaTarget video, #quaggaTarget canvas{
+    width:100% !important; height:100% !important;
+    object-fit:cover;
+    position:absolute; top:0; left:0;
+  }
+  .manual-inner .go{background:var(--safety); color:#fff;}
+  .manual-inner .close{background:transparent; color:var(--oak-light); border:1.5px solid var(--oak);}
+
+  .inst-viewer{
+    display:none;
+    position:fixed; inset:0;
+    background:var(--walnut-dark);
+    z-index:50;
+    flex-direction:column;
+  }
+  .inst-viewer.show{display:flex;}
+  .inst-viewer-header{
+    flex-shrink:0;
+    padding:14px 16px calc(10px + env(safe-area-inset-top)) 16px;
+    background:var(--walnut);
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+  }
+  .inst-viewer-title{font-weight:900; font-size:1.05rem; color:var(--oak-light); flex:1;}
+  .inst-close-btn{
+    border:none; background:var(--safety); color:#fff; font-family:inherit;
+    font-weight:700; font-size:0.82rem; padding:9px 14px; border-radius:20px; cursor:pointer;
+    white-space:nowrap;
+  }
+  .inst-viewer-body{
+    flex:1; overflow-y:auto; padding:16px;
+    display:flex; flex-direction:column; gap:14px;
+  }
+  .inst-media-item{
+    background:rgba(255,255,255,0.05);
+    border-radius:8px;
+    overflow:hidden;
+  }
+  .inst-media-item img, .inst-media-item video{
+    width:100%; display:block; max-height:60vh; object-fit:contain; background:#000;
+  }
+  .inst-file-link{
+    display:flex; align-items:center; gap:10px;
+    padding:14px; background:rgba(255,255,255,0.05); border-radius:8px;
+    color:var(--oak-light); text-decoration:none; font-size:0.9rem;
+  }
+  .inst-file-link .ico{font-size:1.3rem;}
+  .inst-caption{padding:8px 12px; font-size:0.8rem; color:var(--oak-light); opacity:0.85;}
+  .inst-empty{text-align:center; color:var(--oak); padding:30px; font-size:0.9rem;}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>ماسح مواقع الألواح</h1>
+    <div class="sub">وجّه الكاميرا نحو الباركود</div>
+    <div class="conn off" id="connBadge">جاري الاتصال...</div>
+  </header>
+
+  <div class="cam-wrap">
+    <video id="video" autoplay playsinline muted></video>
+    <div id="quaggaTarget" style="position:absolute;inset:0;display:none;"></div>
+    <canvas id="scanCanvas"></canvas>
+    <div class="scan-frame"></div>
+    <div class="cam-hint">امسح باركود اللوح</div>
+    <button class="manual-toggle" id="manualToggleBtn">إدخال يدوي</button>
+
+    <div class="cam-off" id="camOff">
+      <div class="icon">📷</div>
+      <p id="camOffMsg">تعذر تشغيل الكاميرا. تأكد من إعطاء إذن الوصول للكاميرا من إعدادات المتصفح.</p>
+      <button class="retry" id="retryBtn">إعادة المحاولة</button>
+    </div>
+
+    <div class="manual-box" id="manualBox">
+      <div class="manual-inner">
+        <label for="manualInput">أدخل كود اللوح يدويًا</label>
+        <input type="text" id="manualInput" placeholder="LWD-01-XXXXX" autocomplete="off">
+        <div class="row">
+          <button class="go" id="manualGoBtn">تحقق</button>
+          <button class="close" id="manualCloseBtn">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="result-panel idle" id="resultPanel">
+    <div class="r-label">جاهز للمسح</div>
+    <div class="r-value">—</div>
+  </div>
+
+  <div class="inst-viewer" id="instViewer">
+    <div class="inst-viewer-header">
+      <div class="inst-viewer-title" id="instViewerTitle"></div>
+      <button class="inst-close-btn" id="instCloseBtn">إغلاق ← متابعة المسح</button>
+    </div>
+    <div class="inst-viewer-body" id="instViewerBody"></div>
+  </div>
+</div>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyASZzpHN3naZ3UxlRGS-VaDiNZV4-upmzA",
+    authDomain: "professional-restaurant-system.firebaseapp.com",
+    projectId: "professional-restaurant-system",
+    storageBucket: "professional-restaurant-system.firebasestorage.app",
+    messagingSenderId: "809714960687",
+    appId: "1:809714960687:web:649fc13dd48972052139da",
+    measurementId: "G-397FXE7298"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+</script>
+
+<script>
+(function(){
+  let cabinets = [];
+  let lastCode = '';
+  let lastTime = 0;
+  let stream = null;
+  let usingQuagga = false;
+  let quaggaLoaded = false;
+
+  const $ = id => document.getElementById(id);
+  const video = $('video');
+  const panel = $('resultPanel');
+
+  // ---- Firestore realtime cabinets sync ----
+  db.collection('woodfactory_cabinets').onSnapshot(snap=>{
+    cabinets = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    $('connBadge').textContent = 'متصل — ' + cabinets.length + ' خزانة';
+    $('connBadge').className = 'conn on';
+  }, err=>{
+    console.error(err);
+    $('connBadge').textContent = 'تعذر الاتصال بقاعدة البيانات';
+    $('connBadge').className = 'conn off';
+  });
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function showResult(code){
+    const cabMatch = code.match(/^LWD-(\d{2})-/i);
+    if(cabMatch){
+      const prefix = cabMatch[1];
+      const cab = cabinets.find(c=>c.prefix===prefix);
+      if(cab){
+        panel.className = 'result-panel ok';
+        panel.innerHTML = `<div class="r-label">هذا اللوح يخص</div><div class="r-value">${escapeHtml(cab.name)}</div><div class="r-code">${escapeHtml(code)}</div>`;
+        pushLastScan({ code, status:'ok', cabinetId: cab.id, cabinetName: cab.name, prefix });
+        return;
+      }
+      panel.className = 'result-panel bad';
+      panel.innerHTML = `<div class="r-label">صيغة صحيحة لكن الخزانة غير مسجلة</div><div class="r-value">بادئة ${escapeHtml(prefix)}</div>`;
+      pushLastScan({ code, status:'unknown_prefix', prefix });
+      return;
+    }
+
+    if(/^INST-/i.test(code)){
+      lookupInstallation(code);
+      return;
+    }
+
+    panel.className = 'result-panel bad';
+    panel.innerHTML = `<div class="r-label">غير معروف</div><div class="r-value">الكود لا يطابق صيغة النظام</div>`;
+    pushLastScan({ code, status:'invalid' });
+  }
+
+  async function lookupInstallation(code){
+    panel.className = 'result-panel idle';
+    panel.innerHTML = `<div class="r-label">جاري البحث...</div><div class="r-value">${escapeHtml(code)}</div>`;
+    try{
+      const snap = await db.collection('woodfactory_installations').where('code','==',code).limit(1).get();
+      if(snap.empty){
+        panel.className = 'result-panel bad';
+        panel.innerHTML = `<div class="r-label">تركيبة غير مسجلة</div><div class="r-value">${escapeHtml(code)}</div>`;
+        pushLastScan({ code, status:'unknown_install' });
+        return;
+      }
+      const d = snap.docs[0].data();
+      panel.className = 'result-panel ok';
+      panel.innerHTML = `<div class="r-label">تركيبة</div><div class="r-value">${escapeHtml(d.name)}</div><div class="r-code">${escapeHtml(code)}</div>`;
+      pushLastScan({ code, status:'ok_install', installName: d.name });
+      openInstallationViewer(d);
+    }catch(err){
+      console.error(err);
+      panel.className = 'result-panel bad';
+      panel.innerHTML = `<div class="r-label">تعذر البحث</div><div class="r-value">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function youtubeEmbedUrl(url){
+    let id = null;
+    let m = url.match(/[?&]v=([^&]+)/);
+    if(m) id = m[1];
+    if(!id){ m = url.match(/youtu\.be\/([^?&]+)/); if(m) id = m[1]; }
+    if(!id){ m = url.match(/youtube\.com\/embed\/([^?&]+)/); if(m) id = m[1]; }
+    return id ? `https://www.youtube.com/embed/${id}` : null;
+  }
+
+  function openInstallationViewer(d){
+    $('instViewerTitle').textContent = d.name || 'تركيبة';
+    const body = $('instViewerBody');
+    body.innerHTML = '';
+    const files = d.files || [];
+    if(files.length === 0){
+      body.innerHTML = '<div class="inst-empty">ما فيه ملفات مرفقة بهذي التركيبة</div>';
+    } else {
+      files.forEach(f=>{
+        const item = document.createElement('div');
+        item.className = 'inst-media-item';
+        if(f.kind === 'image'){
+          item.innerHTML = `<img src="${f.url}" alt="${escapeHtml(f.name)}"><div class="inst-caption">${escapeHtml(f.name)}</div>`;
+        } else if(f.kind === 'video'){
+          item.innerHTML = `<video src="${f.url}" controls playsinline></video><div class="inst-caption">${escapeHtml(f.name)}</div>`;
+        } else if(f.kind === 'youtube'){
+          const embed = youtubeEmbedUrl(f.url);
+          if(embed){
+            item.innerHTML = `<iframe src="${embed}" style="width:100%;aspect-ratio:16/9;border:0;display:block;" allowfullscreen></iframe><div class="inst-caption">${escapeHtml(f.name)}</div>`;
+          } else {
+            item.innerHTML = `<a class="inst-file-link" href="${f.url}" target="_blank" rel="noopener"><span class="ico">▶️</span><span>${escapeHtml(f.name)}</span></a>`;
+          }
+        } else {
+          item.innerHTML = `<a class="inst-file-link" href="${f.url}" target="_blank" rel="noopener"><span class="ico">📄</span><span>${escapeHtml(f.name)}</span></a>`;
+        }
+        body.appendChild(item);
+      });
+    }
+    $('instViewer').classList.add('show');
+  }
+
+  $('instCloseBtn').addEventListener('click', ()=>{
+    $('instViewer').classList.remove('show');
+  });
+
+  function pushLastScan(data){
+    db.collection('woodfactory_meta').doc('lastScan').set({
+      ...data,
+      scannedAt: Date.now()
+    }).catch(err=>console.error('pushLastScan failed', err));
+  }
+
+  function handleDetected(code){
+    const now = Date.now();
+    if(code === lastCode && now - lastTime < 2500) return;
+    lastCode = code;
+    lastTime = now;
+    if(navigator.vibrate) navigator.vibrate(80);
+    showResult(code);
+  }
+
+  // ---- camera + scanning ----
+  let detector = null;
+  let rafId = null;
+  let detecting = false;
+  let cameraActive = false;
+
+  function cameraErrorMessage(err){
+    const name = err && err.name;
+    if(name === 'NotAllowedError' || name === 'PermissionDeniedError'){
+      return 'إذن الكاميرا مرفوض. جرّب: (١) تطبيق الإعدادات ← اسم المتصفح (Safari/Chrome...) ← Camera ← Allow، أو (٢) اضغط أيقونة القفل/المعلومات يسار شريط العنوان ← Site Settings ← Camera ← Allow. بعدها أعد تحميل الصفحة. أو استخدم الإدخال اليدوي بالأعلى.';
+    }
+    if(name === 'NotFoundError'){
+      return 'ما فيه كاميرا متاحة على هذا الجهاز. استخدم الإدخال اليدوي بالأعلى.';
+    }
+    return 'تعذر تشغيل الكاميرا: ' + (err && err.message ? err.message : 'خطأ غير معروف') + '. استخدم الإدخال اليدوي بالأعلى.';
+  }
+
+  async function startCamera(){
+    $('camOff').classList.remove('show');
+
+    let hasDetector = false;
+    if('BarcodeDetector' in window){
+      try{
+        const formats = await BarcodeDetector.getSupportedFormats();
+        const use = formats.includes('code_128') ? ['code_128'] : formats;
+        if(use.length){
+          detector = new BarcodeDetector({ formats: use });
+          hasDetector = true;
+        }
+      }catch(err){
+        console.error('BarcodeDetector unsupported', err);
+      }
+    }
+
+    if(hasDetector){
+      video.style.display = 'block';
+      $('quaggaTarget').style.display = 'none';
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+      }catch(err){
+        console.error(err);
+        $('camOffMsg').textContent = cameraErrorMessage(err);
+        $('camOff').classList.add('show');
+        return;
+      }
+      detecting = true;
+      cameraActive = true;
+      scanLoopNative();
+    } else {
+      video.style.display = 'none';
+      $('quaggaTarget').style.display = 'block';
+      loadQuaggaThenStart();
+    }
+  }
+
+  async function scanLoopNative(){
+    if(!detecting) return;
+    try{
+      const codes = await detector.detect(video);
+      if(codes && codes.length > 0) handleDetected(codes[0].rawValue);
+    }catch(err){ /* ignore per-frame errors */ }
+    rafId = requestAnimationFrame(scanLoopNative);
+  }
+
+  // ---- Quagga fallback (cascading CDNs) for browsers without BarcodeDetector ----
+  function loadScript(src){
+    return new Promise((resolve, reject)=>{
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  async function loadQuaggaThenStart(){
+    if(quaggaLoaded){ startQuagga(); return; }
+    try{
+      await loadScript('https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js');
+      quaggaLoaded = true;
+      startQuagga();
+    }catch(e1){
+      try{
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js');
+        quaggaLoaded = true;
+        startQuagga();
+      }catch(e2){
+        $('camOffMsg').textContent = 'تعذر تحميل مكتبة قراءة الباركود (تحقق من الإنترنت). استخدم الإدخال اليدوي بالأعلى.';
+        $('camOff').classList.add('show');
+      }
+    }
+  }
+
+  function startQuagga(){
+    if(typeof Quagga === 'undefined'){
+      $('camOffMsg').textContent = 'تعذر تحميل مكتبة قراءة الباركود. استخدم الإدخال اليدوي بالأعلى.';
+      $('camOff').classList.add('show');
+      return;
+    }
+    usingQuagga = true;
+    Quagga.init({
+      inputStream: {
+        name: 'Live',
+        type: 'LiveStream',
+        target: document.getElementById('quaggaTarget'),
+        constraints: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+      },
+      decoder: { readers: ['code_128_reader'] },
+      locate: true
+    }, err=>{
+      if(err){
+        console.error(err);
+        $('camOffMsg').textContent = cameraErrorMessage(err);
+        $('camOff').classList.add('show');
+        return;
+      }
+      Quagga.start();
+      cameraActive = true;
+      Quagga.onDetected(result=>{
+        if(result && result.codeResult && result.codeResult.code){
+          handleDetected(result.codeResult.code);
+        }
+      });
+    });
+  }
+
+  function stopCamera(){
+    detecting = false;
+    if(rafId) cancelAnimationFrame(rafId);
+    if(usingQuagga && typeof Quagga !== 'undefined'){
+      try{ Quagga.stop(); }catch(e){}
+    }
+    usingQuagga = false;
+    if(stream){
+      stream.getTracks().forEach(t=>t.stop());
+      stream = null;
+    }
+    cameraActive = false;
+  }
+
+  $('retryBtn').addEventListener('click', ()=>{
+    stopCamera();
+    startCamera();
+  });
+
+  $('manualToggleBtn').addEventListener('click', ()=>{
+    $('manualBox').classList.add('show');
+    setTimeout(()=>$('manualInput').focus(), 50);
+  });
+  $('manualCloseBtn').addEventListener('click', ()=>{
+    $('manualBox').classList.remove('show');
+  });
+  $('manualGoBtn').addEventListener('click', submitManual);
+  $('manualInput').addEventListener('keydown', e=>{ if(e.key === 'Enter') submitManual(); });
+  function submitManual(){
+    const val = $('manualInput').value.trim();
+    if(!val) return;
+    handleDetected(val);
+    $('manualBox').classList.remove('show');
+    $('manualInput').value = '';
+  }
+
+  window.addEventListener('beforeunload', stopCamera);
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden) stopCamera();
+    else if(!cameraActive) startCamera();
+  });
+
+  startCamera();
+})();
+</script>
+</body>
+</html>
